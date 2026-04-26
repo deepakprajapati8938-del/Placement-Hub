@@ -29,7 +29,7 @@ const tabs: Tab[] = [
   { id: 'leaderboard', label: 'Rank', href: '/leaderboard', icon: Trophy },
   { id: 'notes', label: 'Notes', href: '/notes', icon: BookOpen },
   { id: 'roadmap', label: 'Roadmap', href: '/roadmap', icon: Map },
-  { id: 'admin', label: 'Admin', href: '/admin/tasks', icon: Settings },
+  { id: 'admin', label: 'Admin', href: '/admin/roadmap-builder', icon: Settings },
 ]
 
 interface MobileNavProps {

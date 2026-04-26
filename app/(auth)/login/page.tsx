@@ -17,6 +17,20 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [isRedirecting, setIsRedirecting] = useState(false)
+
+  // Handle browser auto-fill
+  React.useEffect(() => {
+    const checkAutoFill = () => {
+      const emailInput = document.querySelector('input[type="email"]') as HTMLInputElement
+      const passwordInput = document.querySelector('input[type="password"]') as HTMLInputElement
+      if (emailInput?.value && emailInput.value !== email) setEmail(emailInput.value)
+      if (passwordInput?.value && passwordInput.value !== password) setPassword(passwordInput.value)
+    }
+    
+    const timer = setTimeout(checkAutoFill, 500)
+    return () => clearTimeout(timer)
+  }, [email, password])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -32,11 +46,10 @@ export default function LoginPage() {
 
       if (error) throw error
 
+      setIsRedirecting(true)
       router.push('/dashboard')
-      router.refresh()
     } catch (error: any) {
       setError(error.message || 'Failed to login')
-    } finally {
       setLoading(false)
     }
   }
@@ -120,10 +133,10 @@ export default function LoginPage() {
                 type="submit"
                 variant="primary"
                 className="w-full btn-aurora h-11"
-                loading={loading}
-                disabled={!email || !password}
+                loading={loading || isRedirecting}
+                disabled={(!email || !password) && !loading}
               >
-                Sign In
+                {isRedirecting ? 'Redirecting...' : 'Sign In'}
               </Button>
             </form>
 

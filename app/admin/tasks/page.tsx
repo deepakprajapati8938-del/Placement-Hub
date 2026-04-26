@@ -17,13 +17,15 @@ export default function AdminTasksPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingTask, setEditingTask] = useState<Task | null>(null)
+  const [phases, setPhases] = useState<Database['public']['Tables']['roadmap_phases']['Row'][]>([])
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     deadline: '',
     priority: 'medium' as 'low' | 'medium' | 'high',
     tags: [] as string[],
-    roadmap_phase: ''
+    roadmap_phase: '',
+    phase_id: ''
   })
 
   const fetchTasks = useCallback(async () => {
@@ -36,8 +38,12 @@ export default function AdminTasksPage() {
 
       if (error) throw error
       setTasks(data || [])
+
+      // Fetch phases for selection
+      const { data: phasesData } = await supabase.from('roadmap_phases').select('id, title').order('order')
+      setPhases(phasesData || [])
     } catch (error) {
-      console.error('Error fetching tasks:', error)
+      console.error('Error fetching data:', error)
     } finally {
       setLoading(false)
     }
@@ -56,33 +62,27 @@ export default function AdminTasksPage() {
     try {
       const supabase = createClient()
       
+      const taskData = {
+        title: formData.title,
+        description: formData.description,
+        deadline: formData.deadline || null,
+        priority: formData.priority,
+        tags: formData.tags,
+        roadmap_phase: formData.roadmap_phase || null,
+        phase_id: formData.phase_id || null
+      }
+
       if (editingTask) {
-        // Update existing task
         const { error } = await supabase
           .from('tasks')
-          .update({
-            title: formData.title,
-            description: formData.description,
-            deadline: formData.deadline || null,
-            priority: formData.priority,
-            tags: formData.tags,
-            roadmap_phase: formData.roadmap_phase || null
-          })
+          .update(taskData)
           .eq('id', editingTask.id)
 
         if (error) throw error
       } else {
-        // Create new task
         const { error } = await supabase
           .from('tasks')
-          .insert({
-            title: formData.title,
-            description: formData.description,
-            deadline: formData.deadline || null,
-            priority: formData.priority,
-            tags: formData.tags,
-            roadmap_phase: formData.roadmap_phase || null
-          })
+          .insert(taskData)
 
         if (error) throw error
       }
@@ -94,7 +94,8 @@ export default function AdminTasksPage() {
         deadline: '',
         priority: 'medium',
         tags: [],
-        roadmap_phase: ''
+        roadmap_phase: '',
+        phase_id: ''
       })
       setEditingTask(null)
       setShowForm(false)
@@ -308,12 +309,29 @@ export default function AdminTasksPage() {
                     </div>
                   </div>
 
-                  <Input
-                    label="Roadmap Phase"
-                    placeholder="e.g., Foundation, Core Topics"
-                    value={formData.roadmap_phase}
-                    onChange={(e) => setFormData(prev => ({ ...prev, roadmap_phase: e.target.value }))}
-                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input
+                      label="Legacy Roadmap Phase"
+                      placeholder="e.g., Foundation"
+                      value={formData.roadmap_phase}
+                      onChange={(e) => setFormData(prev => ({ ...prev, roadmap_phase: e.target.value }))}
+                    />
+                    <div>
+                      <label className="text-sm font-medium leading-none mb-2 block">
+                        Linked Roadmap Phase
+                      </label>
+                      <select
+                        value={formData.phase_id}
+                        onChange={(e) => setFormData(prev => ({ ...prev, phase_id: e.target.value }))}
+                        className="input"
+                      >
+                        <option value="">No Phase</option>
+                        {phases.map(p => (
+                          <option key={p.id} value={p.id}>{p.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
                   <div className="flex gap-3 pt-4">
                     <Button

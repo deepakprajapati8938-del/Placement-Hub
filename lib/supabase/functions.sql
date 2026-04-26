@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   priority TEXT DEFAULT 'medium',
   deadline TIMESTAMP,
   target_stage TEXT,
+  tags TEXT[],
+  roadmap_phase TEXT,
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -31,22 +33,68 @@ CREATE TABLE IF NOT EXISTS user_tasks (
   PRIMARY KEY (user_id, task_id)
 );
 
+CREATE TABLE IF NOT EXISTS roadmap_phases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  start_date TIMESTAMP,
+  end_date TIMESTAMP,
+  status TEXT DEFAULT 'upcoming',
+  "order" INTEGER DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS tasks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  title TEXT NOT NULL,
+  description TEXT,
+  priority TEXT DEFAULT 'medium',
+  deadline TIMESTAMP,
+  target_stage TEXT,
+  tags TEXT[],
+  roadmap_phase TEXT, -- Legacy column for fallback
+  phase_id UUID REFERENCES roadmap_phases(id),
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS notes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
   content TEXT,
   file_url TEXT,
-  target_stage TEXT,
+  target_stage TEXT, -- Legacy column for fallback
+  phase_id UUID REFERENCES roadmap_phases(id),
   tags TEXT[],
   view_count BIGINT DEFAULT 0,
+  uploaded_at TIMESTAMP DEFAULT NOW(),
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS leaderboard_rank AS
+-- Ensure columns exist if tables already existed
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS resource_url TEXT;
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP DEFAULT NOW();
+ALTER TABLE public.notes ADD COLUMN IF NOT EXISTS phase_id UUID REFERENCES roadmap_phases(id);
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS tags TEXT[];
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS roadmap_phase TEXT;
+ALTER TABLE public.tasks ADD COLUMN IF NOT EXISTS phase_id UUID REFERENCES roadmap_phases(id);
+
+-- Leaderboard Rank View (Dynamic for real-time updates)
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_matviews WHERE matviewname = 'leaderboard_rank') THEN
+        DROP MATERIALIZED VIEW leaderboard_rank CASCADE;
+    ELSIF EXISTS (SELECT 1 FROM pg_views WHERE viewname = 'leaderboard_rank') THEN
+        DROP VIEW leaderboard_rank CASCADE;
+    END IF;
+END $$;
+
+CREATE OR REPLACE VIEW leaderboard_rank AS
 SELECT 
   ROW_NUMBER() OVER (ORDER BY p.xp DESC) as rank,
-  p.id as user_id,
+  p.id as id,
   p.full_name,
   p.avatar_slug,
   p.xp,
@@ -54,34 +102,25 @@ SELECT
 FROM profiles p
 LEFT JOIN user_tasks ut ON p.id = ut.user_id
 LEFT JOIN tasks t ON ut.task_id = t.id
-WHERE p.xp > 0
-GROUP BY p.id, p.full_name, p.avatar_slug, p.xp
-ORDER BY p.xp DESC;
-
--- Refresh leaderboard rank materialized view
-CREATE OR REPLACE FUNCTION refresh_leaderboard_rank()
-RETURNS void
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  -- Refresh the materialized view with updated user rankings
-  REFRESH MATERIALIZED VIEW CONCURRENTLY leaderboard_rank;
-END;
-$$;
+GROUP BY p.id, p.full_name, p.avatar_slug, p.xp;
 
 -- Increment note view count
-CREATE OR REPLACE FUNCTION increment_note_view_count(note_id UUID)
+DROP FUNCTION IF EXISTS public.increment_note_view_count(uuid);
+CREATE OR REPLACE FUNCTION increment_note_view_count(target_note_id UUID)
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 AS $$
 BEGIN
-  UPDATE notes 
-  SET view_count = view_count + 1 
-  WHERE id = note_id;
+  UPDATE public.notes 
+  SET view_count = view_count + 1,
+      updated_at = NOW()
+  WHERE id = target_note_id;
 END;
 $$;
 
 -- Calculate user XP and update profile
+DROP FUNCTION IF EXISTS public.update_user_xp(uuid, integer);
 CREATE OR REPLACE FUNCTION update_user_xp(user_id UUID, xp_change INTEGER)
 RETURNS void
 LANGUAGE plpgsql
@@ -94,6 +133,7 @@ END;
 $$;
 
 -- Get user task statistics
+DROP FUNCTION IF EXISTS public.get_user_task_stats(uuid);
 CREATE OR REPLACE FUNCTION get_user_task_stats(user_id UUID)
 RETURNS TABLE (
   total_tasks BIGINT,
@@ -120,6 +160,7 @@ END;
 $$;
 
 -- Create user task if not exists
+DROP FUNCTION IF EXISTS public.create_user_task_if_not_exists(uuid, uuid);
 CREATE OR REPLACE FUNCTION create_user_task_if_not_exists(user_id UUID, task_id UUID)
 RETURNS void
 LANGUAGE plpgsql
@@ -132,6 +173,7 @@ END;
 $$;
 
 -- Mark task as complete and award XP
+DROP FUNCTION IF EXISTS public.complete_task_and_award_xp(uuid, uuid);
 CREATE OR REPLACE FUNCTION complete_task_and_award_xp(user_id UUID, task_id UUID)
 RETURNS TABLE (
   success BOOLEAN,
@@ -175,6 +217,7 @@ END;
 $$;
 
 -- Reschedule task
+DROP FUNCTION IF EXISTS public.reschedule_task(uuid, uuid, integer);
 CREATE OR REPLACE FUNCTION reschedule_task(user_id UUID, task_id UUID, days_ahead INTEGER DEFAULT 3)
 RETURNS TABLE (
   success BOOLEAN,
@@ -224,46 +267,8 @@ BEGIN
 END;
 $$;
 
--- Get leaderboard with user context
-CREATE OR REPLACE FUNCTION get_leaderboard_with_context(current_user_id UUID, limit_count INTEGER DEFAULT 50)
-RETURNS TABLE (
-  rank BIGINT,
-  user_id UUID,
-  full_name TEXT,
-  avatar_slug TEXT,
-  xp BIGINT,
-  backlog_count BIGINT,
-  is_current_user BOOLEAN,
-  relative_position BIGINT
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  current_user_rank BIGINT;
-BEGIN
-  -- Get current user rank once
-  SELECT lr.rank INTO current_user_rank 
-  FROM leaderboard_rank lr 
-  WHERE lr.user_id = current_user_id;
-
-  RETURN QUERY
-  SELECT 
-    lr.rank,
-    lr.user_id,
-    lr.full_name,
-    lr.avatar_slug,
-    lr.xp,
-    lr.backlog_count,
-    lr.user_id = current_user_id as is_current_user,
-    COALESCE(current_user_rank - lr.rank, 0) as relative_position
-  FROM leaderboard_rank lr
-  ORDER BY lr.rank ASC
-  LIMIT limit_count;
-END;
-$$;
-
 -- Get user dashboard summary
+DROP FUNCTION IF EXISTS public.get_user_dashboard_summary(uuid);
 CREATE OR REPLACE FUNCTION get_user_dashboard_summary(user_id UUID)
 RETURNS TABLE (
   total_tasks BIGINT,
@@ -319,25 +324,7 @@ BEGIN
 END;
 $$;
 
--- Increment note view count atomically
-DROP FUNCTION IF EXISTS increment_note_view_count(UUID);
-CREATE OR REPLACE FUNCTION increment_note_view_count(target_note_id UUID)
-RETURNS VOID
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-  UPDATE public.notes
-  SET view_count = view_count + 1,
-      updated_at = NOW()
-  WHERE id = target_note_id;
-END;
-$$;
-
 -- Grant execute permissions to authenticated users
-GRANT EXECUTE ON FUNCTION refresh_leaderboard_rank() TO authenticated;
-GRANT EXECUTE ON FUNCTION refresh_leaderboard_rank() TO service_role;
-
 GRANT EXECUTE ON FUNCTION increment_note_view_count(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION increment_note_view_count(UUID) TO service_role;
 
@@ -356,16 +343,11 @@ GRANT EXECUTE ON FUNCTION complete_task_and_award_xp(UUID, UUID) TO service_role
 GRANT EXECUTE ON FUNCTION reschedule_task(UUID, UUID, INTEGER) TO authenticated;
 GRANT EXECUTE ON FUNCTION reschedule_task(UUID, UUID, INTEGER) TO service_role;
 
-GRANT EXECUTE ON FUNCTION get_leaderboard_with_context(UUID, INTEGER) TO authenticated;
-GRANT EXECUTE ON FUNCTION get_leaderboard_with_context(UUID, INTEGER) TO service_role;
-
 GRANT EXECUTE ON FUNCTION get_user_dashboard_summary(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_user_dashboard_summary(UUID) TO service_role;
 
--- Create unique index for concurrent refresh
-CREATE UNIQUE INDEX IF NOT EXISTS idx_leaderboard_user_id ON leaderboard_rank(user_id);
-
 -- Handle new user registration (Robust Upsert)
+DROP FUNCTION IF EXISTS public.handle_new_user() CASCADE;
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -386,9 +368,6 @@ BEGIN
     avatar_slug = EXCLUDED.avatar_slug,
     updated_at = NOW();
   
-  -- Refresh the leaderboard view to include the new user
-  PERFORM refresh_leaderboard_rank();
-  
   RETURN new;
 END;
 $$;
@@ -403,40 +382,29 @@ VALUES
   ('00000000-0000-0000-0000-000000000005', 'Chris Wong', 'builder', 950, 2)
 ON CONFLICT (id) DO NOTHING;
 
--- Seed some mock data for notes
-INSERT INTO public.notes (id, title, target_stage, tags, view_count, resource_url)
+-- Seed some mock data for roadmap phases
+INSERT INTO public.roadmap_phases (id, title, description, status, "order", start_date, end_date)
 VALUES 
-  (gen_random_uuid(), 'Ultimate DSA Roadmap', 'Technical', ARRAY['dsa', 'roadmap'], 154, 'https://roadmap.sh/computer-science'),
-  (gen_random_uuid(), 'System Design Fundamentals', 'Technical', ARRAY['system-design', 'interview'], 89, 'https://github.com/donnemartin/system-design-primer'),
-  (gen_random_uuid(), 'Operating Systems Cheat Sheet', 'Technical', ARRAY['os', 'core-cs'], 120, 'https://github.com/prashant-k-sharma/operating-systems-cheat-sheet'),
-  (gen_random_uuid(), 'HR Interview Guide', 'HR', ARRAY['behavioral', 'interview'], 245, 'https://www.careercup.com/page?pid=hr-interview-questions'),
-  (gen_random_uuid(), 'DBMS Interview Questions', 'Technical', ARRAY['dbms', 'sql'], 67, 'https://www.interviewbit.com/dbms-interview-questions/')
+  ('11111111-1111-1111-1111-111111111111', 'Foundation', 'Build strong fundamentals in programming, data structures, and algorithms', 'completed', 0, '2024-01-01', '2024-02-28'),
+  ('22222222-2222-2222-2222-222222222222', 'Core Topics', 'Master key concepts like OOP, databases, and system design', 'in-progress', 1, '2024-03-01', '2024-04-30'),
+  ('33333333-3333-3333-3333-333333333333', 'Advanced Topics', 'Learn advanced algorithms, distributed systems, and performance optimization', 'upcoming', 2, '2024-05-01', '2024-06-30')
+ON CONFLICT (id) DO NOTHING;
+
+-- Seed some mock data for tasks and link to phases
+INSERT INTO public.tasks (id, title, description, priority, phase_id)
+VALUES 
+  (gen_random_uuid(), 'Master Array & Strings', 'Solve 50+ problems on arrays and strings', 'high', '11111111-1111-1111-1111-111111111111'),
+  (gen_random_uuid(), 'Linked List Deep Dive', 'Implement and solve common linked list problems', 'medium', '11111111-1111-1111-1111-111111111111'),
+  (gen_random_uuid(), 'Database Normalization', 'Study 1NF, 2NF, 3NF and BCNF', 'medium', '22222222-2222-2222-2222-222222222222'),
+  (gen_random_uuid(), 'System Design Basics', 'Horizontal vs Vertical scaling, Load balancers', 'high', '22222222-2222-2222-2222-222222222222')
 ON CONFLICT DO NOTHING;
 
--- Initial refresh
-SELECT refresh_leaderboard_rank();
+-- Link existing notes to phases
+UPDATE public.notes SET phase_id = '11111111-1111-1111-1111-111111111111' WHERE title = 'Ultimate DSA Roadmap';
+UPDATE public.notes SET phase_id = '22222222-2222-2222-2222-222222222222' WHERE title = 'System Design Fundamentals';
 
 -- Trigger to create profile on signup
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- Automatically refresh leaderboard on XP change
-CREATE OR REPLACE FUNCTION public.handle_xp_change()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-  IF (OLD.xp IS DISTINCT FROM NEW.xp) THEN
-    PERFORM refresh_leaderboard_rank();
-  END IF;
-  RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS on_profile_xp_change ON public.profiles;
-CREATE TRIGGER on_profile_xp_change
-  AFTER UPDATE OF xp ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION public.handle_xp_change();

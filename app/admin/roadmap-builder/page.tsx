@@ -1,252 +1,477 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { motion } from 'framer-motion'
-import { Plus, Save, Download, X, Edit, Trash2, Calendar } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { 
+  Plus, Save, Download, X, Edit, Trash2, 
+  Calendar, GripVertical, CheckCircle, Clock,
+  BookOpen, Target, Link as LinkIcon, FileText,
+  AlertCircle, ChevronRight, Layout
+} from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { Card, CardContent, CardHeader } from '@/components/ui/Card'
+import { createClient } from '@/lib/supabase/client'
+import { Database } from '@/lib/db/types'
 
-interface RoadmapPhase {
-  id: string
-  title: string
-  description?: string
-  start_date?: string
-  end_date?: string
-  status: 'completed' | 'in-progress' | 'upcoming'
-  tasks?: string[]
-  notes?: string[]
-}
+type Phase = Database['public']['Tables']['roadmap_phases']['Row']
+type Task = Database['public']['Tables']['tasks']['Row']
+type Note = Database['public']['Tables']['notes']['Row']
 
-interface RoadmapData {
-  phases: RoadmapPhase[]
+interface PhaseWithItems extends Phase {
+  tasks: Task[]
+  notes: Note[]
 }
 
 export default function RoadmapBuilderPage() {
-  const [roadmap, setRoadmap] = useState<RoadmapData>({ phases: [] })
-  const [showForm, setShowForm] = useState(false)
-  const [editingPhase, setEditingPhase] = useState<RoadmapPhase | null>(null)
+  const [phases, setPhases] = useState<PhaseWithItems[]>([])
+  const [unassignedTasks, setUnassignedTasks] = useState<Task[]>([])
+  const [unassignedNotes, setUnassignedNotes] = useState<Note[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showPhaseForm, setShowPhaseForm] = useState(false)
+  const [editingPhase, setEditingPhase] = useState<Phase | null>(null)
+  const [saving, setSaving] = useState(false)
+  
   const [formData, setFormData] = useState({
     title: '',
     description: '',
     start_date: '',
     end_date: '',
     status: 'upcoming' as 'completed' | 'in-progress' | 'upcoming',
-    tasks: [] as string[],
-    notes: [] as string[]
+    order: 0
   })
 
-  const fetchRoadmap = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const response = await fetch('/roadmap.json')
-      const data = await response.json()
-      setRoadmap(data || { phases: [] })
+      const supabase = createClient()
+      
+      // Fetch phases
+      const { data: phasesData, error: phasesError } = await supabase
+        .from('roadmap_phases')
+        .select('*')
+        .order('order', { ascending: true })
+
+      if (phasesError) throw phasesError
+
+      // Fetch all tasks
+      const { data: tasksData, error: tasksError } = await supabase
+        .from('tasks')
+        .select('*')
+
+      if (tasksError) throw tasksError
+
+      // Fetch all notes
+      const { data: notesData, error: notesError } = await supabase
+        .from('notes')
+        .select('*')
+
+      if (notesError) throw notesError
+
+      // Group tasks and notes by phase
+      const phasesWithItems = (phasesData || []).map(phase => ({
+        ...phase,
+        tasks: (tasksData || []).filter(t => t.phase_id === phase.id),
+        notes: (notesData || []).filter(n => n.phase_id === phase.id)
+      }))
+
+      setPhases(phasesWithItems)
+      setUnassignedTasks((tasksData || []).filter(t => !t.phase_id))
+      setUnassignedNotes((notesData || []).filter(n => !n.phase_id))
     } catch (error) {
-      console.error('Error fetching roadmap:', error)
+      console.error('Error fetching roadmap data:', error)
+    } finally {
+      setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchRoadmap()
-    }, 0)
-    return () => clearTimeout(timer)
-  }, [fetchRoadmap])
+    fetchData()
+  }, [fetchData])
 
-  const saveRoadmap = async () => {
-    try {
-      const response = await fetch('/api/roadmap/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(roadmap)
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to save roadmap')
-      }
-
-      alert('Roadmap saved successfully!')
-    } catch (error) {
-      console.error('Error saving roadmap:', error)
-      alert('Failed to save roadmap')
-    }
-  }
-
-  const downloadRoadmap = () => {
-    const dataStr = JSON.stringify(roadmap, null, 2)
-    const dataBlob = new Blob([dataStr], { type: 'application/json' })
-    const url = URL.createObjectURL(dataBlob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = 'roadmap.json'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
-  }
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handlePhaseSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setSaving(true)
     
-    if (editingPhase) {
-      // Update existing phase
-      setRoadmap(prev => ({
-        phases: prev.phases.map(phase => 
-          phase.id === editingPhase.id 
-            ? { ...formData, id: editingPhase.id }
-            : phase
-        )
-      }))
-    } else {
-      // Create new phase
-      const newPhase: RoadmapPhase = {
-        ...formData,
-        id: Date.now().toString()
+    try {
+      const supabase = createClient()
+      
+      if (editingPhase) {
+        const { error } = await supabase
+          .from('roadmap_phases')
+          .update({
+            title: formData.title,
+            description: formData.description,
+            start_date: formData.start_date || null,
+            end_date: formData.end_date || null,
+            status: formData.status,
+            order: formData.order
+          })
+          .eq('id', editingPhase.id)
+
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('roadmap_phases')
+          .insert({
+            title: formData.title,
+            description: formData.description,
+            start_date: formData.start_date || null,
+            end_date: formData.end_date || null,
+            status: formData.status,
+            order: phases.length
+          })
+
+        if (error) throw error
       }
-      setRoadmap(prev => ({
-        phases: [...prev.phases, newPhase]
-      }))
-    }
 
-    // Reset form
-    setFormData({
-      title: '',
-      description: '',
-      start_date: '',
-      end_date: '',
-      status: 'upcoming',
-      tasks: [],
-      notes: []
-    })
-    setEditingPhase(null)
-    setShowForm(false)
-  }
-
-  const handleEdit = (phase: RoadmapPhase) => {
-    setEditingPhase(phase)
-    setFormData({
-      title: phase.title,
-      description: phase.description || '',
-      start_date: phase.start_date || '',
-      end_date: phase.end_date || '',
-      status: phase.status,
-      tasks: phase.tasks || [],
-      notes: phase.notes || []
-    })
-    setShowForm(true)
-  }
-
-  const handleDelete = (phaseId: string) => {
-    if (!confirm('Are you sure you want to delete this phase?')) return
-
-    setRoadmap(prev => ({
-      phases: prev.phases.filter(phase => phase.id !== phaseId)
-    }))
-  }
-
-  const handleAddItem = (type: 'tasks' | 'notes') => {
-    const input = document.getElementById(`${type}-input`) as HTMLInputElement
-    if (input && input.value.trim()) {
-      setFormData(prev => ({
-        ...prev,
-        [type]: [...prev[type], input.value.trim()]
-      }))
-      input.value = ''
+      setEditingPhase(null)
+      setShowPhaseForm(false)
+      setFormData({
+        title: '',
+        description: '',
+        start_date: '',
+        end_date: '',
+        status: 'upcoming',
+        order: 0
+      })
+      await fetchData()
+    } catch (error: any) {
+      alert(error.message)
+    } finally {
+      setSaving(false)
     }
   }
 
-  const handleRemoveItem = (type: 'tasks' | 'notes', itemToRemove: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [type]: prev[type].filter(item => item !== itemToRemove)
-    }))
+  const handleDeletePhase = async (id: string) => {
+    if (!confirm('Are you sure? This will unassign all tasks/notes in this phase.')) return
+    
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from('roadmap_phases')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+      await fetchData()
+    } catch (error: any) {
+      alert(error.message)
+    }
+  }
+
+  const toggleItemAssignment = async (type: 'tasks' | 'notes', itemId: string, phaseId: string | null) => {
+    try {
+      const supabase = createClient()
+      const { error } = await supabase
+        .from(type)
+        .update({ phase_id: phaseId })
+        .eq('id', itemId)
+
+      if (error) throw error
+      await fetchData()
+    } catch (error: any) {
+      alert(error.message)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg-base">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-accent-purple border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-text-secondary font-medium animate-pulse">Building Roadmap...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="min-h-screen bg-bg-base pb-24">
+      <div className="max-w-7xl mx-auto px-4 py-8">
         {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="flex items-center justify-between mb-8"
-        >
-          <div>
-            <h1 className="text-3xl font-bold text-text dark:text-text-dark">
-              Roadmap Builder
-            </h1>
-            <p className="text-text-muted">
-              Create and manage the learning roadmap for students
-            </p>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={saveRoadmap}
-              className="flex items-center gap-2"
-            >
-              <Save className="w-4 h-4" />
-              Save Roadmap
-            </Button>
-            <Button
-              onClick={downloadRoadmap}
-              variant="outline"
-              className="flex items-center gap-2"
-            >
-              <Download className="w-4 h-4" />
-              Download JSON
-            </Button>
-          </div>
-        </motion.div>
-
-        {/* Phase Form Modal */}
-        {showForm && (
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-            onClick={() => setShowForm(false)}
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
           >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.2 }}
-              className="card max-w-lg w-full max-h-[90vh] overflow-y-auto"
-              onClick={(e) => e.stopPropagation()}
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-xl bg-accent-purple/10 flex items-center justify-center text-accent-purple">
+                <Layout className="w-6 h-6" />
+              </div>
+              <h1 className="text-3xl font-bold text-text-primary tracking-tight">Roadmap Builder</h1>
+            </div>
+            <p className="text-text-secondary">Orchestrate the learning journey and study materials</p>
+          </motion.div>
+
+          <div className="flex items-center gap-3">
+            <Button
+              onClick={() => setShowPhaseForm(true)}
+              className="btn-aurora"
             >
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-bold text-text dark:text-text-dark">
-                        {editingPhase ? 'Edit Phase' : 'Create New Phase'}
-                  </h2>
-                  <button
-                    onClick={() => setShowForm(false)}
-                    className="text-text-muted hover:text-text transition-colors"
+              <Plus className="w-4 h-4 mr-2" />
+              New Phase
+            </Button>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Main Roadmap Timeline */}
+          <div className="lg:col-span-2 space-y-6">
+            <h2 className="text-sm font-bold uppercase tracking-widest text-text-muted mb-4 flex items-center gap-2">
+              <Target className="w-4 h-4" />
+              Active Path
+            </h2>
+
+            {phases.length === 0 ? (
+              <Card className="border-dashed border-2 bg-transparent text-center py-16">
+                <div className="w-16 h-16 rounded-full bg-bg-surface-hover flex items-center justify-center mx-auto mb-4 text-text-muted">
+                  <Calendar className="w-8 h-8" />
+                </div>
+                <h3 className="text-lg font-bold text-text-primary mb-2">No Phases Yet</h3>
+                <p className="text-text-secondary mb-6 max-w-xs mx-auto">Start by creating your first phase to structure the roadmap.</p>
+                <Button onClick={() => setShowPhaseForm(true)} variant="outline">Create First Phase</Button>
+              </Card>
+            ) : (
+              <div className="space-y-6">
+                {phases.map((phase, idx) => (
+                  <motion.div
+                    key={phase.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: idx * 0.05 }}
                   >
-                    <X className="w-5 h-5" />
-                  </button>
+                    <Card className="glass-card overflow-hidden group">
+                      <div className="absolute top-0 left-0 w-1 h-full bg-accent-purple opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <CardHeader className="pb-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-3 mb-2">
+                              <Badge variant={
+                                phase.status === 'completed' ? 'success' :
+                                phase.status === 'in-progress' ? 'warning' : 'default'
+                              } className="text-[10px] uppercase">
+                                {phase.status}
+                              </Badge>
+                              <span className="text-xs font-bold text-text-muted">Phase {idx + 1}</span>
+                            </div>
+                            <h3 className="text-xl font-bold text-text-primary">{phase.title}</h3>
+                            {phase.description && (
+                              <p className="text-sm text-text-secondary mt-1 line-clamp-2">{phase.description}</p>
+                            )}
+                          </div>
+                          
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={() => {
+                                setEditingPhase(phase)
+                                setFormData({
+                                  title: phase.title,
+                                  description: phase.description || '',
+                                  start_date: phase.start_date ? phase.start_date.split('T')[0] : '',
+                                  end_date: phase.end_date ? phase.end_date.split('T')[0] : '',
+                                  status: phase.status,
+                                  order: phase.order
+                                })
+                                setShowPhaseForm(true)
+                              }}
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button 
+                              variant="danger" 
+                              size="sm"
+                              onClick={() => handleDeletePhase(phase.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2 pt-4 border-t border-glass-border">
+                          {/* Linked Tasks */}
+                          <div>
+                            <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
+                              <CheckCircle className="w-3 h-3 text-accent-teal" />
+                              Linked Tasks ({phase.tasks.length})
+                            </h4>
+                            <div className="space-y-2">
+                              {phase.tasks.map(task => (
+                                <div key={task.id} className="flex items-center justify-between p-2 rounded-lg bg-bg-surface-hover/50 text-xs font-medium group/item">
+                                  <span className="truncate pr-2">{task.title}</span>
+                                  <button 
+                                    onClick={() => toggleItemAssignment('tasks', task.id, null)}
+                                    className="text-text-muted hover:text-danger opacity-0 group-hover/item:opacity-100 transition-all"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              {phase.tasks.length === 0 && <p className="text-[10px] italic text-text-muted">No tasks assigned</p>}
+                            </div>
+                          </div>
+
+                          {/* Linked Notes */}
+                          <div>
+                            <h4 className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3 flex items-center gap-2">
+                              <BookOpen className="w-3 h-3 text-accent-blue" />
+                              Linked Notes ({phase.notes.length})
+                            </h4>
+                            <div className="space-y-2">
+                              {phase.notes.map(note => (
+                                <div key={note.id} className="flex items-center justify-between p-2 rounded-lg bg-bg-surface-hover/50 text-xs font-medium group/item">
+                                  <span className="truncate pr-2">{note.title}</span>
+                                  <button 
+                                    onClick={() => toggleItemAssignment('notes', note.id, null)}
+                                    className="text-text-muted hover:text-danger opacity-0 group-hover/item:opacity-100 transition-all"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              {phase.notes.length === 0 && <p className="text-[10px] italic text-text-muted">No notes assigned</p>}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sidebar: Unassigned Items Inventory */}
+          <div className="space-y-8">
+            <div className="sticky top-8">
+              <h2 className="text-sm font-bold uppercase tracking-widest text-text-muted mb-6 flex items-center gap-2">
+                <Download className="w-4 h-4 rotate-180" />
+                Inventory
+              </h2>
+
+              <div className="space-y-6">
+                {/* Unassigned Tasks */}
+                <Card className="glass-card glass-card--teal">
+                  <CardHeader className="pb-3">
+                    <h3 className="text-sm font-bold flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-accent-teal" />
+                      Unassigned Tasks
+                      <Badge variant="default" className="ml-auto">{unassignedTasks.length}</Badge>
+                    </h3>
+                  </CardHeader>
+                  <CardContent className="max-h-[300px] overflow-y-auto space-y-2 thin-scrollbar">
+                    {unassignedTasks.map(task => (
+                      <div key={task.id} className="p-3 rounded-xl bg-bg-surface-hover/30 border border-glass-border hover:border-accent-teal/30 transition-all">
+                        <p className="text-xs font-bold text-text-primary mb-2 truncate">{task.title}</p>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {phases.map(phase => (
+                            <button
+                              key={phase.id}
+                              onClick={() => toggleItemAssignment('tasks', task.id, phase.id)}
+                              className="text-[9px] font-bold px-2 py-0.5 rounded bg-accent-teal/10 text-accent-teal hover:bg-accent-teal hover:text-white transition-colors border border-accent-teal/20"
+                            >
+                              Add to {phase.title.split(' ')[0]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {unassignedTasks.length === 0 && (
+                      <div className="text-center py-6 opacity-40">
+                        <CheckCircle className="w-8 h-8 mx-auto mb-2" />
+                        <p className="text-xs">All tasks assigned</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Unassigned Notes */}
+                <Card className="glass-card glass-card--purple">
+                  <CardHeader className="pb-3">
+                    <h3 className="text-sm font-bold flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-accent-purple" />
+                      Unassigned Notes
+                      <Badge variant="secondary" className="ml-auto">{unassignedNotes.length}</Badge>
+                    </h3>
+                  </CardHeader>
+                  <CardContent className="max-h-[300px] overflow-y-auto space-y-2 thin-scrollbar">
+                    {unassignedNotes.map(note => (
+                      <div key={note.id} className="p-3 rounded-xl bg-bg-surface-hover/30 border border-glass-border hover:border-accent-purple/30 transition-all">
+                        <p className="text-xs font-bold text-text-primary mb-2 truncate">{note.title}</p>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {phases.map(phase => (
+                            <button
+                              key={phase.id}
+                              onClick={() => toggleItemAssignment('notes', note.id, phase.id)}
+                              className="text-[9px] font-bold px-2 py-0.5 rounded bg-accent-purple/10 text-accent-purple hover:bg-accent-purple hover:text-white transition-colors border border-accent-purple/20"
+                            >
+                              Add to {phase.title.split(' ')[0]}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {unassignedNotes.length === 0 && (
+                      <div className="text-center py-6 opacity-40">
+                        <BookOpen className="w-8 h-8 mx-auto mb-2" />
+                        <p className="text-xs">All notes assigned</p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Phase Form Modal */}
+      <AnimatePresence>
+        {showPhaseForm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-bg-base/80 backdrop-blur-sm"
+              onClick={() => setShowPhaseForm(false)}
+            />
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 20 }}
+              className="relative w-full max-w-lg glass-card glass-card--purple overflow-hidden"
+            >
+              <CardHeader className="pb-4 border-b border-glass-border">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-text-primary">
+                    {editingPhase ? 'Edit Phase' : 'Create New Phase'}
+                  </h2>
+                  <Button variant="outline" size="sm" onClick={() => setShowPhaseForm(false)} className="rounded-full w-8 h-8 p-0">
+                    <X className="w-4 h-4" />
+                  </Button>
                 </div>
               </CardHeader>
-              <CardContent>
-                <form onSubmit={handleSubmit} className="space-y-4">
+              <CardContent className="pt-6">
+                <form onSubmit={handlePhaseSubmit} className="space-y-6">
                   <Input
                     label="Phase Title"
-                    placeholder="e.g., Foundation"
+                    placeholder="e.g., Programming Foundations"
                     value={formData.title}
                     onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
                     required
                   />
 
-                  <div>
-                    <label className="text-sm font-medium leading-none mb-2 block">
-                      Description
-                    </label>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Description</label>
                     <textarea
-                      placeholder="Describe what students will learn in this phase"
+                      className="input min-h-[100px] py-3 px-4 resize-none"
+                      placeholder="What will students focus on during this phase?"
                       value={formData.description}
                       onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                      className="input min-h-[100px] resize-none"
                     />
                   </div>
 
@@ -265,239 +490,43 @@ export default function RoadmapBuilderPage() {
                     />
                   </div>
 
-                  <div>
-                    <label className="text-sm font-medium leading-none mb-2 block">
-                      Status
-                    </label>
-                    <select
-                      value={formData.status}
-                      onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as any }))}
-                      className="input"
-                    >
-                      <option value="upcoming">Upcoming</option>
-                      <option value="in-progress">In Progress</option>
-                      <option value="completed">Completed</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="text-sm font-medium leading-none mb-2 block">
-                      Linked Tasks (comma-separated)
-                    </label>
-                    <div className="flex gap-2 mb-2">
-                      <input
-                        id="tasks-input"
-                        type="text"
-                        placeholder="task-1, task-2"
-                        value={formData.tasks.join(', ')}
-                        onChange={(e) => setFormData(prev => ({ ...prev, tasks: e.target.value.split(',').map(t => t.trim()).filter(Boolean) }))}
-                        className="input flex-1"
-                      />
-                      <Button
-                        type="button"
-                        onClick={() => handleAddItem('tasks')}
-                        variant="outline"
-                        size="sm"
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Status</label>
+                      <select
+                        value={formData.status}
+                        onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as any }))}
+                        className="input"
                       >
-                        Add
-                      </Button>
+                        <option value="upcoming">Upcoming</option>
+                        <option value="in-progress">In Progress</option>
+                        <option value="completed">Completed</option>
+                      </select>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {formData.tasks.map(task => (
-                        <Badge key={task} variant="default" className="flex items-center gap-1">
-                          {task}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem('tasks', task)}
-                            className="ml-1 text-text-muted hover:text-danger transition-colors"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
+                    <Input
+                      type="number"
+                      label="Display Order"
+                      value={formData.order}
+                      onChange={(e) => setFormData(prev => ({ ...prev, order: parseInt(e.target.value) }))}
+                    />
                   </div>
 
-                  <div>
-                    <label className="text-sm font-medium leading-none mb-2 block">
-                      Linked Notes (comma-separated)
-                    </label>
-                    <div className="flex gap-2 mb-2">
-                      <input
-                        id="notes-input"
-                        type="text"
-                        placeholder="note-1, note-2"
-                        value={formData.notes.join(', ')}
-                        onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value.split(',').map(n => n.trim()).filter(Boolean) }))}
-                        className="input flex-1"
-                      />
-                      <Button
-                        type="button"
-                        onClick={() => handleAddItem('notes')}
-                        variant="outline"
-                        size="sm"
-                      >
-                        Add
-                      </Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {formData.notes.map(note => (
-                        <Badge key={note} variant="secondary" className="flex items-center gap-1">
-                          {note}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItem('notes', note)}
-                            className="ml-1 text-text-muted hover:text-danger transition-colors"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
+                  <div className="flex gap-3 pt-2">
                     <Button
                       type="submit"
-                      className="flex-1"
+                      className="flex-1 btn-aurora"
+                      loading={saving}
                       disabled={!formData.title}
                     >
                       {editingPhase ? 'Update Phase' : 'Create Phase'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      onClick={() => setShowForm(false)}
-                    >
-                      Cancel
                     </Button>
                   </div>
                 </form>
               </CardContent>
             </motion.div>
-          </motion.div>
+          </div>
         )}
-
-        {/* Roadmap Preview */}
-        <div className="space-y-6">
-          {roadmap.phases.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="text-center py-12"
-            >
-              <Calendar className="w-16 h-16 mx-auto mb-4 text-muted-foreground" />
-              <h3 className="text-lg font-medium text-text mb-2">
-                No phases created yet
-              </h3>
-              <p className="text-sm text-text-muted">
-                Create your first phase to start building the roadmap
-              </p>
-            </motion.div>
-          ) : (
-            roadmap.phases.map((phase, index) => (
-              <motion.div
-                key={phase.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <Card>
-                  <CardContent>
-                    <div className="flex items-start justify-between gap-3 mb-4">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-semibold text-text dark:text-text-dark mb-2">
-                          {phase.title}
-                        </h3>
-                        {phase.description && (
-                          <p className="text-sm text-text-muted mb-3">
-                            {phase.description}
-                          </p>
-                        )}
-                        
-                        <div className="flex items-center gap-4 text-sm text-text-muted">
-                          <Badge variant={
-                            phase.status === 'completed' ? 'success' :
-                            phase.status === 'in-progress' ? 'warning' : 'default'
-                          }>
-                            {phase.status}
-                          </Badge>
-                          {phase.start_date && (
-                            <span>
-                              Starts: {new Date(phase.start_date).toLocaleDateString()}
-                            </span>
-                          )}
-                          {phase.end_date && (
-                            <span>
-                              Ends: {new Date(phase.end_date).toLocaleDateString()}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEdit(phase)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="sm"
-                          onClick={() => handleDelete(phase.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Linked Items */}
-                    <div className="space-y-2">
-                      {phase.tasks && phase.tasks.length > 0 && (
-                        <div>
-                          <h4 className="text-sm font-medium text-text mb-1">Tasks ({phase.tasks.length})</h4>
-                          <div className="flex flex-wrap gap-1">
-                            {phase.tasks.map(task => (
-                              <Badge key={task} variant="default" className="text-xs">
-                                {task}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {phase.notes && phase.notes.length > 0 && (
-                        <div>
-                          <h4 className="text-sm font-medium text-text mb-1">Notes ({phase.notes.length})</h4>
-                          <div className="flex flex-wrap gap-1">
-                            {phase.notes.map(note => (
-                              <Badge key={note} variant="secondary" className="text-xs">
-                                {note}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))
-          )}
-        </div>
-
-        {/* Add Phase Button */}
-        <div className="fixed bottom-8 right-8">
-          <Button
-            onClick={() => setShowForm(true)}
-            className="rounded-full w-14 h-14 shadow-lg"
-          >
-            <Plus className="w-6 h-6" />
-          </Button>
-        </div>
-      </div>
+      </AnimatePresence>
     </div>
   )
 }

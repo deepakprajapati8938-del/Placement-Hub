@@ -42,7 +42,9 @@ const navItems: NavItem[] = [
   { id: 'leaderboard', label: 'Leaderboard', href: '/leaderboard', icon: Trophy },
   { id: 'notes', label: 'Study Notes', href: '/notes', icon: BookOpen },
   { id: 'roadmap', label: 'Roadmap', href: '/roadmap', icon: Map },
-  { id: 'admin', label: 'Admin Panel', href: '/admin/tasks', icon: Settings },
+  { id: 'admin-roadmap', label: 'Roadmap Builder', href: '/admin/roadmap-builder', icon: Map, isAdmin: true },
+  { id: 'admin-tasks', label: 'Manage Tasks', href: '/admin/tasks', icon: Settings, isAdmin: true },
+  { id: 'admin-notes', label: 'Manage Notes', href: '/admin/notes', icon: BookOpen, isAdmin: true },
 ]
 
 export const Sidebar: React.FC<SidebarProps> = ({ 
@@ -54,7 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const pathname = usePathname()
 
   const filteredNavItems = navItems.filter(item => {
-    if (item.id === 'admin') {
+    if ((item as any).isAdmin) {
       return user?.email?.toLowerCase() === 'dp7800549@gmail.com'
     }
     return true

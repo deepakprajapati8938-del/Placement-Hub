@@ -17,18 +17,31 @@ export default function AdminNotesPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingNote, setEditingNote] = useState<Note | null>(null)
+  const [phases, setPhases] = useState<Database['public']['Tables']['roadmap_phases']['Row'][]>([])
   const [formData, setFormData] = useState({
     title: '',
     resource_url: '',
     file_url: '',
     tags: [] as string[],
-    target_stage: ''
+    target_stage: '',
+    phase_id: ''
   })
   const [fileUploading, setFileUploading] = useState(false)
 
   useEffect(() => {
     fetchNotes()
+    fetchPhases()
   }, [])
+
+  const fetchPhases = async () => {
+    try {
+      const supabase = createClient()
+      const { data } = await supabase.from('roadmap_phases').select('id, title').order('order')
+      setPhases(data || [])
+    } catch (error) {
+      console.error('Error fetching phases:', error)
+    }
+  }
 
   const fetchNotes = async () => {
     try {
@@ -53,17 +66,20 @@ export default function AdminNotesPage() {
     try {
       const supabase = createClient()
       
+      const noteData = {
+        title: formData.title,
+        resource_url: formData.resource_url || null,
+        file_url: formData.file_url || null,
+        tags: formData.tags,
+        target_stage: formData.target_stage || null,
+        phase_id: formData.phase_id || null
+      }
+
       if (editingNote) {
         // Update existing note
         const { error } = await supabase
           .from('notes')
-          .update({
-            title: formData.title,
-            resource_url: formData.resource_url || null,
-            file_url: formData.file_url || null,
-            tags: formData.tags,
-            target_stage: formData.target_stage || null
-          })
+          .update(noteData)
           .eq('id', editingNote.id)
 
         if (error) throw error
@@ -71,13 +87,7 @@ export default function AdminNotesPage() {
         // Create new note
         const { error } = await supabase
           .from('notes')
-          .insert({
-            title: formData.title,
-            resource_url: formData.resource_url || null,
-            file_url: formData.file_url || null,
-            tags: formData.tags,
-            target_stage: formData.target_stage || null
-          })
+          .insert(noteData)
 
         if (error) throw error
       }
@@ -88,7 +98,8 @@ export default function AdminNotesPage() {
         resource_url: '',
         file_url: '',
         tags: [],
-        target_stage: ''
+        target_stage: '',
+        phase_id: ''
       })
       setEditingNote(null)
       setShowForm(false)
@@ -107,7 +118,8 @@ export default function AdminNotesPage() {
       resource_url: note.resource_url || '',
       file_url: note.file_url || '',
       tags: note.tags || [],
-      target_stage: note.target_stage || ''
+      target_stage: note.target_stage || '',
+      phase_id: note.phase_id || ''
     })
     setShowForm(true)
   }
@@ -318,12 +330,29 @@ export default function AdminNotesPage() {
                     </div>
                   </div>
 
-                  <Input
-                    label="Target Stage"
-                    placeholder="e.g., Foundation, Core Topics"
-                    value={formData.target_stage}
-                    onChange={(e) => setFormData(prev => ({ ...prev, target_stage: e.target.value }))}
-                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input
+                      label="Legacy Target Stage"
+                      placeholder="e.g., Foundation"
+                      value={formData.target_stage}
+                      onChange={(e) => setFormData(prev => ({ ...prev, target_stage: e.target.value }))}
+                    />
+                    <div>
+                      <label className="text-sm font-medium leading-none mb-2 block">
+                        Linked Roadmap Phase
+                      </label>
+                      <select
+                        value={formData.phase_id}
+                        onChange={(e) => setFormData(prev => ({ ...prev, phase_id: e.target.value }))}
+                        className="input"
+                      >
+                        <option value="">No Phase</option>
+                        {phases.map(p => (
+                          <option key={p.id} value={p.id}>{p.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
                   <div className="flex gap-3 pt-4">
                     <Button

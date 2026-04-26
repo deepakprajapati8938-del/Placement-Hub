@@ -31,7 +31,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrains.variable} h-full antialiased`}
       suppressHydrationWarning
     >
-      <body className="min-h-full font-sans bg-background text-foreground">
+      <body className="min-h-full font-sans bg-background text-foreground" suppressHydrationWarning>
         <ClientLayout>
           {children}
         </ClientLayout>

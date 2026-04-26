@@ -70,7 +70,7 @@ export default function Home() {
             </p>
             
             <div className="flex flex-col sm:flex-row items-center justify-center gap-5">
-              <Link href="/dashboard" className="w-full sm:w-auto">
+              <Link href="/signup" className="w-full sm:w-auto">
                 <Button size="lg" className="w-full h-14 px-10 group shadow-xl shadow-accent-purple/20">
                   Get Started
                   <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
@@ -197,7 +197,7 @@ export default function Home() {
               Join thousands of students who are already using Placement Hub to prepare for their dream careers.
             </p>
             
-            <Link href="/dashboard">
+            <Link href="/signup">
               <Button size="lg" className="h-16 px-12 text-lg shadow-2xl shadow-accent-purple/40">
                 Join Now for Free
               </Button>

@@ -22,39 +22,59 @@ export const ClientLayout = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter()
   const pathname = usePathname()
   const [user, setUser] = useState<UserProfile | null>(null)
-  const [isDarkMode, setIsDarkMode] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [isDarkMode, setIsDarkMode] = useState(true)
+  const [isInitialized, setIsInitialized] = useState(false)
 
-  const isAuthPage = ['/', '/login', '/signup'].includes(pathname)
+  const publicPages = ['/', '/login', '/signup', '/roadmap']
+  const isPublicPage = publicPages.includes(pathname)
+  const showAppLayout = !!user && !['/', '/login', '/signup'].includes(pathname)
 
   useEffect(() => {
     // Get current user
     const getUser = async () => {
-      const supabase = createClient()
-      const { data: { user: authUser } } = await supabase.auth.getUser()
-      if (authUser) {
-        // Get user profile
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', authUser.id)
-          .single()
+      setIsLoading(true)
+      try {
+        const supabase = createClient()
+        const { data: { user: authUser } } = await supabase.auth.getUser()
         
-        setUser({ 
-          ...(profile || {}), 
-          id: authUser.id,
-          email: authUser.email 
-        } as UserProfile)
-      } else {
+        if (authUser) {
+          // Get user profile
+          const { data: profile, error: profileError } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', authUser.id)
+            .single()
+          
+          if (profileError && profileError.code !== 'PGRST116') {
+            console.error('Error fetching profile:', profileError)
+          }
+
+          setUser({ 
+            ...(profile || {}), 
+            id: authUser.id,
+            email: authUser.email 
+          } as UserProfile)
+        } else {
+          setUser(null)
+        }
+      } catch (error) {
+        console.error('Error in getUser:', error)
         setUser(null)
+      } finally {
+        setIsLoading(false)
+        setIsInitialized(true)
       }
     }
 
     getUser()
 
-    // Check for dark mode preference
+    // Check for theme preference
     const savedTheme = localStorage.getItem('theme')
-    if (savedTheme === 'dark') {
-      Promise.resolve().then(() => setIsDarkMode(true))
+    if (savedTheme === 'light') {
+      setIsDarkMode(false)
+    } else {
+      setIsDarkMode(true)
     }
 
     // Listen for auth changes
@@ -64,11 +84,26 @@ export const ClientLayout = ({ children }: { children: React.ReactNode }) => {
         getUser()
       } else if (event === 'SIGNED_OUT') {
         setUser(null)
+        setIsLoading(false)
+        setIsInitialized(true)
+      } else if (event === 'INITIAL_SESSION' && !session) {
+        setIsLoading(false)
+        setIsInitialized(true)
       }
     })
 
     return () => subscription?.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    // Don't redirect until we've finished the initial auth check
+    if (isLoading || !isInitialized) return
+
+    // Redirect to login if not authenticated and trying to access protected page
+    if (!user && !isPublicPage) {
+      router.push('/login')
+    }
+  }, [user, isLoading, isInitialized, isPublicPage, router])
 
   useEffect(() => {
     if (isDarkMode) {
@@ -88,6 +123,7 @@ export const ClientLayout = ({ children }: { children: React.ReactNode }) => {
     try {
       const supabase = createClient()
       await supabase.auth.signOut()
+      setUser(null)
       router.push('/')
       router.refresh()
     } catch (error) {
@@ -105,7 +141,7 @@ export const ClientLayout = ({ children }: { children: React.ReactNode }) => {
         </div>
         
         <div className="flex flex-1 relative z-10 overflow-hidden">
-          {!isAuthPage && (
+          {showAppLayout && (
             <Sidebar 
               user={user}
               onThemeToggle={toggleTheme}
@@ -115,13 +151,13 @@ export const ClientLayout = ({ children }: { children: React.ReactNode }) => {
           )}
           <main className={cn(
             "flex-1 overflow-y-auto",
-            !isAuthPage && "pb-24 md:pb-0"
+            showAppLayout && "pb-24 md:pb-0"
           )}>
             {children}
           </main>
         </div>
         
-        {!isAuthPage && (
+        {showAppLayout && (
           <MobileNav 
             onThemeToggle={toggleTheme}
             onLogout={handleLogout}

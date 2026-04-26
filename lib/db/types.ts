@@ -42,6 +42,41 @@ export interface Database {
         }
         Relationships: []
       }
+      roadmap_phases: {
+        Row: {
+          id: string
+          title: string
+          description: string | null
+          start_date: string | null
+          end_date: string | null
+          status: 'completed' | 'in-progress' | 'upcoming'
+          order: number
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          title: string
+          description?: string | null
+          start_date?: string | null
+          end_date?: string | null
+          status?: 'completed' | 'in-progress' | 'upcoming'
+          order?: number
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          title?: string
+          description?: string | null
+          start_date?: string | null
+          end_date?: string | null
+          status?: 'completed' | 'in-progress' | 'upcoming'
+          order?: number
+          created_at?: string
+          updated_at?: string
+        }
+      }
       tasks: {
         Row: {
           id: string
@@ -51,6 +86,7 @@ export interface Database {
           priority: 'low' | 'medium' | 'high'
           tags: string[]
           roadmap_phase: string | null
+          phase_id: string | null
           is_backlog: boolean
         }
         Insert: {
@@ -61,6 +97,7 @@ export interface Database {
           priority?: 'low' | 'medium' | 'high'
           tags?: string[]
           roadmap_phase?: string | null
+          phase_id?: string | null
         }
         Update: {
           id?: string
@@ -70,6 +107,7 @@ export interface Database {
           priority?: 'low' | 'medium' | 'high'
           tags?: string[]
           roadmap_phase?: string | null
+          phase_id?: string | null
         }
       }
       notes: {
@@ -80,6 +118,7 @@ export interface Database {
           file_url: string | null
           tags: string[]
           target_stage: string | null
+          phase_id: string | null
           view_count: number
           uploaded_at: string
         }
@@ -90,6 +129,7 @@ export interface Database {
           file_url?: string | null
           tags?: string[]
           target_stage?: string | null
+          phase_id?: string | null
           view_count?: number
           uploaded_at?: string
         }
@@ -100,6 +140,7 @@ export interface Database {
           file_url?: string | null
           tags?: string[]
           target_stage?: string | null
+          phase_id?: string | null
           view_count?: number
           uploaded_at?: string
         }
