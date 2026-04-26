@@ -1,0 +1,54 @@
+{
+  "phases": [
+    {
+      "id": "1",
+      "title": "Foundation",
+      "description": "Build strong fundamentals in programming, data structures, and algorithms",
+      "status": "completed",
+      "start_date": "2024-01-01",
+      "end_date": "2024-02-28",
+      "tasks": ["task-1", "task-2", "task-3"],
+      "notes": ["note-1"]
+    },
+    {
+      "id": "2",
+      "title": "Core Topics",
+      "description": "Master key concepts like OOP, databases, and system design",
+      "status": "in-progress",
+      "start_date": "2024-03-01",
+      "end_date": "2024-04-30",
+      "tasks": ["task-4", "task-5"],
+      "notes": ["note-2", "note-3"]
+    },
+    {
+      "id": "3",
+      "title": "Advanced Topics",
+      "description": "Learn advanced algorithms, distributed systems, and performance optimization",
+      "status": "upcoming",
+      "start_date": "2024-05-01",
+      "end_date": "2024-06-30",
+      "tasks": ["task-6", "task-7"],
+      "notes": []
+    },
+    {
+      "id": "4",
+      "title": "Interview Prep",
+      "description": "Practice coding interviews, behavioral questions, and mock interviews",
+      "status": "upcoming",
+      "start_date": "2024-07-01",
+      "end_date": "2024-08-31",
+      "tasks": ["task-8", "task-9"],
+      "notes": ["note-4"]
+    },
+    {
+      "id": "5",
+      "title": "Company Specific",
+      "description": "Research target companies and prepare for their specific interview processes",
+      "status": "upcoming",
+      "start_date": "2024-09-01",
+      "end_date": "2024-10-31",
+      "tasks": ["task-10"],
+      "notes": []
+    }
+  ]
+}
