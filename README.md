@@ -1,4 +1,4 @@
-# 🌌 Placement Hub: The Aurora Experience
+# 🌌 Placement Hub:
 
 **Placement Hub** is a premium, high-performance web application designed to streamline the campus placement preparation journey. Featuring a stunning **Aurora Glassmorphism** design system, it provides students with a gamified roadmap, real-time leaderboard, and curated study resources.
 
